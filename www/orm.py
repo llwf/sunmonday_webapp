@@ -28,36 +28,45 @@ async def create_pool(loop, **kw):
 
 
 async def select(sql, args, size=None):
-	log(sql, args)
-	global __pool
-	with (await __pool) as conn:
-		cur = await conn.cursor(aiomysql.DictCursor)
-		await cur.execute(sql.replace('?', '%s'), args or ())
-		if size:
-			rs = await cur.fetchmany(size)
-		else:
-			rs = await cur.fetchall()
-		await cur.close()
-		logging.info('rows returned: %s' % len(rs))
-		return rs
+    """实现SQL语句：SELECT。
+    
+    传入参数为：SQL语句，SQL语句中占位符对应的参数集，返回记录行数。
+    执行为：从连接池获取连接->创建游标用来执行MySQL命令->用游标执行MySQL命令->返回查询结果。
+    """
+    log(sql, args)
+    global __pool
+    async with __pool.get() as conn:  # 从连接池中获取一个连接，使用完后自动释放。
+        async with conn.cursor(aiomysql.DictCursor) as cur:  # 创建一个游标，返回由dict组成的list，使用完后自动释放。
+            await cur.execute(sql.replace('?', '%s'),
+                              args or ())  # 执行SQL，mysql的占位符是%s，和python一样，为了coding的便利，先用SQL的占位符？写SQL语句，最后执行时在转换过来。
+            if size:
+                rs = await cur.fetchmany(size)
+            else:
+                rs = await cur.fetchall()
+        logging.info('rows returned: %s' % len(rs))
+        return rs
 
 async def execute(sql, args, autocommit=True):
-	log(sql, args)
-	with (await __pool) as conn:
-		if not autocommit:
-			await conn.begin()
-		try:
-			cur = await conn.cursor()
-			await cur.execute(sql.replace('?', '%s'), args)
-			affected = cur.rowcount
-			await cur.close()
-			if not autocommit:
-				await conn.commit()
-		except BaseException as e:
-			if not autocommit:
-				await conn.rollback()
-			raise
-		return affected
+    """实现SQL语句：INSERT、UPDATE、DELETE。
+
+    传入参数分别为：SQL语句、SQL语句中占位符对应的参数集、默认打开MySQL的自动提交事务。
+    定义通用的execute()函数来执行增删改。
+    """
+    log(sql)
+    async with __pool.get() as conn:
+        if not autocommit:  # 如果MySQL禁止隐式提交，则标记事务开始。
+            await conn.begin()
+        try:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(sql.replace('?', '%s'), args)
+                affected = cur.rowcount  # 获得影响的行数
+            if not autocommit:  # 如果MySQL禁止隐式提交，手动提交事务
+                await conn.commit()
+        except BaseException as e:  # 如果事务提交错误，则退回
+            if not autocommit:
+                await conn.rollback()  # 回滚当前启动的协程
+            raise
+        return affected  # return number of affected rows.
 
 def create_args_string(num):
 	L = []
@@ -163,9 +172,9 @@ class Model(dict, metaclass=ModelMetaClass):
 
     @classmethod
     async def findAll(cls, where=None, args=None, **kw):
-        ' find objects by where clause. '
-        sql = [cls.__select__]
-        if where:
+        """find objects by where clause. """
+        sql = [cls.__select__]  # 用一个列表存储SELECT语句
+        if where:  # 添加WHERE子句作为条件
             sql.append('where')
             sql.append(where)
         if args is None:

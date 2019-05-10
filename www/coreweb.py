@@ -65,16 +65,18 @@ def has_var_kw_arg(fn):
 			return True
 
 def has_request_arg(fn):
-	sig = inspect.signature(fn)
-	params = sig.parameters
-	found = False
-	for name, param in params.items():
-		if name == 'request':
-			found = True
-			continue
-		if found and (param.kind != inspect.Parameter.VAR_POSITIONAL and param.kind != inspect.Parameter.KEYWORD_ONLY and param.kind != inspect.Parameter.VAR_KEYWORD):
-			raise ValueError('request parameter must be the last named parameter in function: %s%s' % (fn.__name__, str(sig)))
-	return found
+    """检查函数是否有request参数，返回布尔值。若有request参数，检查该参数是否为该函数的最后一个参数，否则抛出异常。"""
+    params = inspect.signature(fn).parameters
+    found = False
+    for name, param in params.items():
+        if name == 'request':
+            found = True
+            continue
+        if found and (  # 如果找到'request'参数后，还出现位置参数，就会抛出异常
+                param.kind != inspect.Parameter.VAR_POSITIONAL and param.kind != inspect.Parameter.KEYWORD_ONLY and param.kind != inspect.Parameter.VAR_KEYWORD):
+            raise ValueError(
+                'request parameter must be the last named parameter in function: %s%s' % (fn.__name__, str(sig)))
+    return found
 
 #定义RequestHandler类，从URL函数中分析其需要的参数
 class RequestHandler(object):
@@ -120,7 +122,7 @@ class RequestHandler(object):
 				for name in self._named_kw_args:
 					if name in kw:
 						copy[name] = kw[name]
-					kw = copy
+				kw = copy
 			#check named arg
 			for k, v in request.match_info.items():
 				if k in kw:
